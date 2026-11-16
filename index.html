@@ -6,6 +6,8 @@
 <title>Mesa de Guerra</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
 :root{--bg:#eef1f4;--fg:#1b2430;--panel:#fbfcfd;--line:#c5cdd6;color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#10161d;--fg:#e6ebf0;--panel:#18202a;--line:#2f3a47;color-scheme:dark}}
@@ -24,6 +26,7 @@ input[type=text]{cursor:text;width:150px}
 button.act{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .sw{width:26px;height:26px;border-radius:50%;padding:0;border:2px solid var(--panel)}
 .sw.sel{outline:2px solid var(--fg);outline-offset:2px}
+#st{font-weight:600}
 #hint{font-size:12px;opacity:.75;flex:1 1 220px}
 #map{flex:1;min-height:0;width:100%}
 #map.draw,#map.draw .leaflet-grab,#map.draw .leaflet-interactive{cursor:crosshair!important}
@@ -59,22 +62,32 @@ button.act{background:var(--fg);color:var(--bg);border-color:var(--fg)}
       <button id="finish">Fechar área</button>
       <button id="del">Apagar</button>
       <button id="io">Salvar / carregar</button>
+      <button id="copy">Copiar link</button>
     </div>
+    <span id="st"></span>
     <span id="hint"></span>
   </div>
   <div id="map"></div>
   <div id="dlg" hidden>
-    <div>Copie este texto para guardar o mapa, ou cole um texto salvo e clique em Carregar.</div>
+    <div>Copie este texto para guardar um backup da sala, ou cole um texto salvo e clique em Carregar. Carregar substitui tudo na sala, para todos.</div>
     <textarea id="json" spellcheck="false"></textarea>
     <div class="grp"><button id="load">Carregar</button><button id="close">Fechar</button></div>
   </div>
 </div>
 
 <script>
-// Para trocar o endereço secreto, mude só esta linha.
-const SECRET = '#mesa-de-guerra';
+// 1) Cole aqui os dados do seu projeto Firebase (Configurações do projeto > Seus apps > Web).
+//    Enquanto estiver com SEU-PROJETO, o mapa funciona só no seu navegador (modo local de teste).
+const FIREBASE_CONFIG = {
+  apiKey: 'COLE_AQUI',
+  authDomain: 'SEU-PROJETO.firebaseapp.com',
+  databaseURL: 'https://SEU-PROJETO-default-rtdb.firebaseio.com',
+  projectId: 'SEU-PROJETO',
+  appId: 'COLE_AQUI'
+};
 
 const $ = s => document.querySelector(s);
+const online = !/SEU-PROJETO/.test(FIREBASE_CONFIG.databaseURL);
 const COLORS = ['#d93a3a', '#2f6fdd', '#2e9e5b', '#e2a823', '#8e44ad', '#e67e22', '#16a2a8', '#6b7480'];
 const SYM = {
   inf: ['M-22-14L22 14M-22 14L22-14', 0],
@@ -89,28 +102,64 @@ const HINTS = {
   unit: 'Escolha o tipo, escreva um nome e clique no mapa para posicionar.'
 };
 let map, layer, drawL, tool = 'move', color = COLORS[0], sel = null, draft = [];
-let S = { areas: [], units: [] };
-const get = s => s.k === 'a' ? S.areas[s.i] : S.units[s.i];
+let dragging = false, lastDrag = 0, room = null, ref = null;
+let R = { areas: {}, units: {} };   // estado da sala: areas/{id} e units/{id}
 
-function save() { try { localStorage.setItem('mg-leaflet', JSON.stringify(S)); } catch (e) {} }
-function boot() {
-  let d = null;
-  try { d = JSON.parse(localStorage.getItem('mg-leaflet') || 'null'); } catch (e) {}
-  if (d) { S.areas = d.areas || []; S.units = d.units || []; }
-  else S.units = [{ ll: [51.504, -0.159], t: 'inf', c: COLORS[0], l: 'Exemplo' }];
+const col = k => k === 'a' ? 'areas' : 'units';
+const get = s => R[col(s.k)][s.id];
+const sp = f => col(sel.k) + '/' + sel.id + '/' + f;
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const lkey = () => 'mg-room-' + room;
+
+function norm(d) {
+  R = { areas: (d && d.areas) || {}, units: (d && d.units) || {} };
+  if (sel && !get(sel)) { sel = null; $('#label').value = ''; }
+}
+// Grava um valor (ou apaga, com null). Online vai para o Firebase; no modo local, para o navegador.
+function W(path, v) {
+  if (online) { ref.child(path).set(v); return; }
+  const k = path.split('/'); let o = R;
+  for (let i = 0; i < k.length - 1; i++) o = o[k[i]] = o[k[i]] || {};
+  if (v === null) delete o[k[k.length - 1]]; else o[k[k.length - 1]] = v;
+  try { localStorage.setItem(lkey(), JSON.stringify(R)); } catch (e) {}
+  if (!dragging) render();
 }
 
+function connect(r) {
+  if (ref) { ref.off(); ref = null; }
+  room = r; sel = null; draft = []; $('#label').value = '';
+  $('#st').textContent = 'Sala: ' + r + (online ? ' (ao vivo)' : ' (modo local de teste)');
+  if (online) {
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    ref = firebase.database().ref('rooms/' + r);
+    ref.on('value', s => { norm(s.val()); if (!dragging) render(); },
+      err => { $('#st').textContent = 'Erro de conexão: ' + err.message; });
+  } else {
+    try { norm(JSON.parse(localStorage.getItem(lkey()) || 'null')); } catch (e) { norm(null); }
+    render();
+  }
+}
+// No modo local, outras abas do mesmo navegador também acompanham.
+addEventListener('storage', e => {
+  if (!online && room && e.key === lkey()) { try { norm(JSON.parse(e.newValue || 'null')); render(); } catch (x) {} }
+});
+
 function initMap() {
-  // Equivalente ao seu código: new LeafletMap(...) vira L.map(...), TileLayer vira L.tileLayer(...)
   map = L.map('map', { doubleClickZoom: false }).setView([51.505, -0.159], 15);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-  }).addTo(map);
+  const osmCredit = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const carto = '&copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const fundos = {
+    'Claro': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 20, attribution: osmCredit + ' ' + carto }),
+    'Escuro': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 20, attribution: osmCredit + ' ' + carto }),
+    'Satélite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, attribution: 'Tiles &copy; Esri' }),
+    'Relevo': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { subdomains: 'abc', maxZoom: 17, attribution: osmCredit + ' | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }),
+    'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: osmCredit })
+  };
+  fundos['Claro'].addTo(map);
+  L.control.layers(fundos).addTo(map);
   layer = L.layerGroup().addTo(map);
   drawL = L.layerGroup().addTo(map);
   map.on('click', onMap);
-  render();
 }
 
 function icon(u, on) {
@@ -124,20 +173,27 @@ function icon(u, on) {
 function render() {
   if (!map) return;
   layer.clearLayers(); drawL.clearLayers();
-  S.areas.forEach((a, i) => {
-    const on = sel && sel.k === 'a' && sel.i === i;
+  for (const [id, a] of Object.entries(R.areas)) {
+    if (!a || !a.p) continue;
+    const on = sel && sel.k === 'a' && sel.id === id;
     const p = L.polygon(a.p, { color: a.c, fillColor: a.c, fillOpacity: .35, weight: on ? 5 : 3, dashArray: on ? '8 6' : null }).addTo(layer);
     if (a.l) p.bindTooltip(a.l, { permanent: true, direction: 'center', className: 'lbl' });
-    p.on('click', e => hit(e, { k: 'a', i }));
-  });
-  S.units.forEach((u, i) => {
-    const on = sel && sel.k === 'u' && sel.i === i;
+    p.on('click', e => hit(e, { k: 'a', id }));
+  }
+  for (const [id, u] of Object.entries(R.units)) {
+    if (!u || !u.ll) continue;
+    const on = sel && sel.k === 'u' && sel.id === id;
     const m = L.marker(u.ll, { icon: icon(u, on), draggable: tool === 'move' }).addTo(layer);
     if (u.l) m.bindTooltip(u.l, { permanent: true, direction: 'bottom', offset: [0, 14], className: 'lbl' });
-    m.on('click', e => hit(e, { k: 'u', i }));
-    m.on('dragend', () => { const q = m.getLatLng(); u.ll = [q.lat, q.lng]; save(); });
-  });
-  if (draft.length) {
+    m.on('click', e => hit(e, { k: 'u', id }));
+    m.on('dragstart', () => { dragging = true; });
+    m.on('drag', () => {   // os outros veem a tropa se mexendo enquanto você arrasta
+      const n = Date.now();
+      if (n - lastDrag > 120) { lastDrag = n; const q = m.getLatLng(); W('units/' + id + '/ll', [q.lat, q.lng]); }
+    });
+    m.on('dragend', () => { dragging = false; const q = m.getLatLng(); W('units/' + id + '/ll', [q.lat, q.lng]); });
+  }
+  if (draft.length) {   // o rascunho da área é só seu até você fechar
     L.polyline(draft, { color, weight: 3, dashArray: '6 4', interactive: false }).addTo(drawL);
     draft.forEach((q, i) => {
       const first = i === 0 && draft.length > 2;
@@ -155,8 +211,8 @@ function onMap(e) {
   const ll = [e.latlng.lat, e.latlng.lng];
   if (tool === 'area') { draft.push(ll); render(); }
   else if (tool === 'unit') {
-    S.units.push({ ll, t: $('#utype').value, c: color, l: $('#label').value });
-    $('#label').value = ''; save(); render();
+    W('units/' + newId(), { ll, t: $('#utype').value, c: color, l: $('#label').value });
+    $('#label').value = '';
   } else select(null);
 }
 function select(s) { sel = s; $('#label').value = s ? (get(s).l || '') : ''; render(); }
@@ -171,15 +227,15 @@ function setTool(t) {
 }
 function finish() {
   if (draft.length > 2) {
-    S.areas.push({ p: draft, c: color, l: $('#label').value });
-    $('#label').value = ''; save();
+    W('areas/' + newId(), { p: draft, c: color, l: $('#label').value });
+    $('#label').value = '';
   }
   draft = []; render();
 }
 function del() {
   if (!sel) return;
-  (sel.k === 'a' ? S.areas : S.units).splice(sel.i, 1);
-  sel = null; $('#label').value = ''; save(); render();
+  const s = sel; sel = null; $('#label').value = '';
+  W(col(s.k) + '/' + s.id, null); render();
 }
 
 $('#tools').addEventListener('click', e => { if (e.target.dataset.t) setTool(e.target.dataset.t); });
@@ -189,21 +245,27 @@ COLORS.forEach((c, i) => {
   b.onclick = () => {
     color = c;
     document.querySelectorAll('.sw').forEach(x => x.classList.toggle('sel', x === b));
-    if (sel) { get(sel).c = c; save(); render(); }
+    if (sel) W(sp('c'), c);
   };
   $('#sws').append(b);
 });
-$('#label').addEventListener('input', e => { if (sel) { get(sel).l = e.target.value; save(); render(); } });
-$('#utype').addEventListener('change', e => { if (sel && sel.k === 'u') { get(sel).t = e.target.value; save(); render(); } });
+$('#label').addEventListener('input', e => { if (sel) W(sp('l'), e.target.value); });
+$('#utype').addEventListener('change', e => { if (sel && sel.k === 'u') W(sp('t'), e.target.value); });
 $('#finish').onclick = finish;
 $('#del').onclick = del;
-$('#io').onclick = () => { $('#json').value = JSON.stringify(S); $('#dlg').hidden = false; $('#json').select(); };
+$('#copy').onclick = async () => {
+  try { await navigator.clipboard.writeText(location.href); $('#copy').textContent = 'Copiado'; setTimeout(() => { $('#copy').textContent = 'Copiar link'; }, 1500); }
+  catch (e) { prompt('Copie o link:', location.href); }
+};
+$('#io').onclick = () => { $('#json').value = JSON.stringify(R); $('#dlg').hidden = false; $('#json').select(); };
 $('#close').onclick = () => { $('#dlg').hidden = true; };
 $('#load').onclick = () => {
   try {
     const d = JSON.parse($('#json').value);
-    S.areas = d.areas || []; S.units = d.units || [];
-    sel = null; save(); render(); $('#dlg').hidden = true;
+    const n = { areas: d.areas || {}, units: d.units || {} };
+    if (online) ref.set(n);
+    else { norm(n); try { localStorage.setItem(lkey(), JSON.stringify(R)); } catch (x) {} render(); }
+    $('#dlg').hidden = true;
   } catch (x) { alert('Texto inválido. Cole exatamente o que foi copiado em Salvar.'); }
 };
 addEventListener('keydown', e => {
@@ -213,16 +275,21 @@ addEventListener('keydown', e => {
   if (e.key === 'Delete' || e.key === 'Backspace') del();
 });
 
-// O mapa só aparece com o endereço secreto (#mesa-de-guerra no fim da URL).
+// Tudo que vier depois do # na URL é o nome da sala. Sem nada depois do #, aparece só o 404.
+function roomName() {
+  try { return decodeURIComponent(location.hash.slice(1)).trim().toLowerCase().replace(/[.#$\[\]\/\s]+/g, '-').slice(0, 60); }
+  catch (e) { return ''; }
+}
 function route() {
-  const ok = location.hash === SECRET;
-  $('#app').hidden = !ok; $('#home').hidden = ok;
-  if (!ok) return;
+  const r = roomName();
+  $('#app').hidden = !r; $('#home').hidden = !!r;
+  if (!r) { if (ref) { ref.off(); ref = null; } room = null; return; }
   if (!map) initMap(); else map.invalidateSize();
+  if (r !== room) connect(r);
 }
 addEventListener('hashchange', route);
 
-boot(); setTool('move'); route();
+setTool('move'); route();
 </script>
 </body>
 </html>
