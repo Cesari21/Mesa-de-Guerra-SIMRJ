@@ -79,11 +79,13 @@ button.act{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 // 1) Cole aqui os dados do seu projeto Firebase (Configurações do projeto > Seus apps > Web).
 //    Enquanto estiver com SEU-PROJETO, o mapa funciona só no seu navegador (modo local de teste).
 const FIREBASE_CONFIG = {
-  apiKey: 'COLE_AQUI',
-  authDomain: 'SEU-PROJETO.firebaseapp.com',
-  databaseURL: 'https://SEU-PROJETO-default-rtdb.firebaseio.com',
-  projectId: 'SEU-PROJETO',
-  appId: 'COLE_AQUI'
+  apiKey: 'AIzaSyD61457X1xY9wLlbpgZXIu1xUXoAAyKN1Y',
+  authDomain: 'mesa-de-guerra-a0fd2.firebaseapp.com',
+  databaseURL: 'https://mesa-de-guerra-a0fd2-default-rtdb.firebaseio.com',
+  projectId: 'mesa-de-guerra-a0fd2',
+  storageBucket: 'mesa-de-guerra-a0fd2.firebasestorage.app',
+  messagingSenderId: '850148543849',
+  appId: '1:850148543849:web:87703d9321e2b04c0601f8'
 };
 
 // 2) Opcional: chave gratuita da CARTO (carto.com/basemaps/apikey). Pode deixar vazio e usar o OpenStreetMap.
@@ -131,7 +133,7 @@ function W(path, v) {
 function connect(r) {
   if (ref) { ref.off(); ref = null; }
   room = r; sel = null; draft = []; $('#label').value = '';
-  $('#st').textContent = 'Sala: ' + r + (online ? ' (ao vivo)' : ' (modo local de teste)');
+  $('#st').textContent = r + (online ? '' : ' (modo local de teste)');
   if (online) {
     if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
     ref = firebase.database().ref('rooms/' + r);
