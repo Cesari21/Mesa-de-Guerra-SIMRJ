@@ -86,6 +86,9 @@ const FIREBASE_CONFIG = {
   appId: 'COLE_AQUI'
 };
 
+// 2) Opcional: chave gratuita da CARTO (carto.com/basemaps/apikey). Pode deixar vazio e usar o OpenStreetMap.
+const CARTO_KEY = 'cb1_5ack_1_983b3c890934bca3ea032dfe';
+
 const $ = s => document.querySelector(s);
 const online = !/SEU-PROJETO/.test(FIREBASE_CONFIG.databaseURL);
 const COLORS = ['#d93a3a', '#2f6fdd', '#2e9e5b', '#e2a823', '#8e44ad', '#e67e22', '#16a2a8', '#6b7480'];
@@ -148,14 +151,15 @@ function initMap() {
   map = L.map('map', { doubleClickZoom: false }).setView([51.505, -0.159], 15);
   const osmCredit = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
   const carto = '&copy; <a href="https://carto.com/attributions">CARTO</a>';
+  // OpenStreetMap só carrega com o site em https (ou http://localhost), nunca com o arquivo aberto direto.
   const fundos = {
-    'Claro': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 20, attribution: osmCredit + ' ' + carto }),
-    'Escuro': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 20, attribution: osmCredit + ' ' + carto }),
+    'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: osmCredit }),
     'Satélite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, attribution: 'Tiles &copy; Esri' }),
-    'Relevo': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { subdomains: 'abc', maxZoom: 17, attribution: osmCredit + ' | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }),
-    'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: osmCredit })
+    'Relevo': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { subdomains: 'abc', maxZoom: 17, attribution: osmCredit + ' | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' })
   };
-  fundos['Claro'].addTo(map);
+  // A CARTO agora exige uma chave gratuita. Com a chave preenchida em CARTO_KEY, ela vira o fundo padrão.
+  if (CARTO_KEY) fundos['CARTO Voyager'] = L.tileLayer('https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=' + encodeURIComponent(CARTO_KEY), { maxZoom: 20, attribution: osmCredit + ' ' + carto });
+  fundos[CARTO_KEY ? 'CARTO Voyager' : 'OpenStreetMap'].addTo(map);
   L.control.layers(fundos).addTo(map);
   layer = L.layerGroup().addTo(map);
   drawL = L.layerGroup().addTo(map);
