@@ -65,7 +65,6 @@ button.act{background:var(--fg);color:var(--bg);border-color:var(--fg)}
       <button id="copy">Copiar link</button>
     </div>
     <span id="st"></span>
-    <span id="hint"></span>
   </div>
   <div id="map"></div>
   <div id="dlg" hidden>
@@ -100,11 +99,6 @@ const SYM = {
   art: ['M-7 0a7 7 0 1 0 14 0a7 7 0 1 0-14 0', 1],
   nav: ['M-15 4q7.5-9 15 0t15 0', 0],
   fort: ['M-9-8h18v16h-18z', 1]
-};
-const HINTS = {
-  move: 'Arraste as tropas para mover. Clique numa área ou tropa para editar nome e cor.',
-  area: 'Clique no mapa para marcar os vértices. Clique no primeiro ponto, ou em Fechar área, para concluir.',
-  unit: 'Escolha o tipo, escreva um nome e clique no mapa para posicionar.'
 };
 let map, layer, drawL, tool = 'move', color = COLORS[0], sel = null, draft = [];
 let dragging = false, lastDrag = 0, room = null, ref = null;
@@ -227,7 +221,6 @@ function setTool(t) {
   tool = t; draft = []; sel = null;
   document.querySelectorAll('#tools button').forEach(b => b.classList.toggle('act', b.dataset.t === t));
   $('#finish').hidden = t !== 'area';
-  $('#hint').textContent = HINTS[t];
   $('#map').classList.toggle('draw', t !== 'move');
   render();
 }
